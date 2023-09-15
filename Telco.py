@@ -4,11 +4,16 @@ import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
 import missingno as msno
-from sklearn.impute import KNNImputer
-from sklearn.preprocessing import MinMaxScaler, LabelEncoder, StandardScaler, RobustScaler
+from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, roc_auc_score, f1_score, recall_score, precision_score
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.neighbors import KNeighborsClassifier
+from xgboost import XGBClassifier
+from lightgbm import LGBMClassifier
+from sklearn.tree import DecisionTreeClassifier
+
+
 
 pd.set_option("display.max_columns", None)
 pd.set_option("display.width", 500)
@@ -237,7 +242,6 @@ plt.show(block=True)
 # DEĞİŞKEN ÜRETME
 #################################################
 
-
 # şirkette kaldığı ay - sözleşme süresi
 df.loc[(df["tenure"] < 10) & (df["Contract"] == "Month-to-month") , "NEW_ten_Cont_NOM"] = "very_shortMonth"
 df.loc[((df["tenure"] >= 10) & (df["tenure"] < 20)) & (df["Contract"] == "Month-to-month"), "NEW_ten_Cont_NOM"] = "shortMonth"
@@ -371,6 +375,8 @@ df[num_cols].head()
 y = df["Churn"]
 X = df.drop(["Churn", "customerID"], axis=1)
 
+
+
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.30, random_state=17)
 
 rf_model = RandomForestClassifier(random_state=46).fit(X_train, y_train)
@@ -381,7 +387,6 @@ print(f"Recall: {round(recall_score(y_pred,y_test),3)}") # 0.65
 print(f"Precision: {round(precision_score(y_pred,y_test), 2)}") # 0.50
 print(f"F1: {round(f1_score(y_pred,y_test), 2)}") # 0.57
 print(f"Auc: {round(roc_auc_score(y_pred,y_test), 2)}") # 0.74
-
 
 
 # Yeni türettiğimiz değişkenlerin önem ve işe yarama oranını grafikle inceleyelim ;
@@ -397,6 +402,36 @@ def plot_importance(model, features, num=len(X), save=False):
     if save:
         plt.savefig('importances.png')
 plot_importance(rf_model, X_train)
+
+
+
+
+# Modellerin ön tanımlı değerlerine bakarak config.py'daki GridSearch edilecek paramsların aralıklarını girelim.
+
+knn_model = KNeighborsClassifier().fit(X, y)
+knn_model.get_params()
+
+cart_model = DecisionTreeClassifier(random_state=1).fit(X, y)
+cart_model.get_params()
+
+rf_model = RandomForestClassifier(random_state=46).fit(X_train, y_train)
+rf_model.get_params()
+
+xgboost_model = XGBClassifier(random_state=17).fit(X, y)
+xgboost_model.get_params()
+
+lightgbm_model = LGBMClassifier(random_state=17).fit(X, y)
+lightgbm_model.get_params()
+
+
+
+
+
+
+
+
+
+
 
 
 
