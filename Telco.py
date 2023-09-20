@@ -5,13 +5,14 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import missingno as msno
 from sklearn.preprocessing import LabelEncoder, StandardScaler
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, roc_auc_score, f1_score, recall_score, precision_score
+from sklearn.model_selection import train_test_split, cross_validate
+from sklearn.metrics import accuracy_score, roc_auc_score, f1_score, recall_score, precision_score, classification_report
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.neighbors import KNeighborsClassifier
 from xgboost import XGBClassifier
 from lightgbm import LGBMClassifier
 from sklearn.tree import DecisionTreeClassifier
+from sklearn.metrics import precision_recall_curve
 
 
 
@@ -349,6 +350,7 @@ df = one_hot_encoder(df, ohe_cols, True)
 
 df.head()
 
+
 # Kategorileri güncelliyoruz.
 cat_cols, num_cols, cat_but_car = grab_col_names(df)
 
@@ -374,22 +376,61 @@ df[num_cols].head()
 
 y = df["Churn"]
 X = df.drop(["Churn", "customerID"], axis=1)
-
-
-
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.30, random_state=17)
 
-rf_model = RandomForestClassifier(random_state=46).fit(X_train, y_train)
-y_pred = rf_model.predict(X_test)
 
+# Sonuçlar doğrultusunda veri setinin dengesiz olduğunu gözlemledik ;
+f,ax = plt.subplots(1,2,figsize=(18,8))
+df['Churn'].value_counts().plot.pie(explode=[0,0.1],autopct='%1.1f%%',ax=ax[0],shadow=True)
+ax[0].set_title('dağılım')
+ax[0].set_ylabel('')
+sns.countplot(x='Churn', data=df, ax=ax[1])
+ax[1].set_title('Churn')
+plt.show(block=True)
+
+# Dengeli hale getirmek için Random undersampling uygulayacağız.
+# rA dan önce eğitim setindeki sınıf sayısı
+y_train.value_counts()
+
+# Oversampling
+from imblearn.over_sampling import RandomOverSampler
+oversample = RandomOverSampler(sampling_strategy='minority')
+X_randomover, y_randomover = oversample.fit_resample(X_train, y_train)
+
+
+# Random undersampling sonra
+y_randomover.value_counts()
+
+rf_model = RandomForestClassifier(random_state=46).fit(X_randomover, y_randomover)
+
+
+# Test
+y_pred = rf_model.predict(X_test)
 print(f"Accuracy: {round(accuracy_score(y_pred, y_test), 2)}") #  0.79
 print(f"Recall: {round(recall_score(y_pred,y_test),3)}") # 0.65
 print(f"Precision: {round(precision_score(y_pred,y_test), 2)}") # 0.50
 print(f"F1: {round(f1_score(y_pred,y_test), 2)}") # 0.57
 print(f"Auc: {round(roc_auc_score(y_pred,y_test), 2)}") # 0.74
 
+# Burada da doğruluk oranımızı analiz ettik...
+print(classification_report(y_test, y_pred))
 
+
+# Genel anlamda accuary, prec. gibi değerlerde bir tutarsızlık gözüküyor (değişkenlik) yani 10 katlı çapraz doğrulmaa şart ;
+cv_results = cross_validate(rf_model, X, y, cv=5, scoring=["accuracy", "precision", "recall", "f1", "roc_auc"])
+
+# şimdi artık daha kesin sonuçlarla çıkabiliriz ;
+cv_results["test_accuracy"].mean() # 0.787
+cv_results["test_recall"].mean() # 0.484
+cv_results["test_precision"].mean() # 0.63
+cv_results["test_f1"].mean() # 0.547
+cv_results["test_roc_auc"].mean() # 0.824
+
+
+
+##################################################################
 # Yeni türettiğimiz değişkenlerin önem ve işe yarama oranını grafikle inceleyelim ;
+##################################################################
 def plot_importance(model, features, num=len(X), save=False):
     feature_imp = pd.DataFrame({'Value': model.feature_importances_, 'Feature': features.columns})
     plt.figure(figsize=(10, 10))
@@ -404,9 +445,10 @@ def plot_importance(model, features, num=len(X), save=False):
 plot_importance(rf_model, X_train)
 
 
-
-
+##################################################################
 # Modellerin ön tanımlı değerlerine bakarak config.py'daki GridSearch edilecek paramsların aralıklarını girelim.
+##################################################################
+
 
 knn_model = KNeighborsClassifier().fit(X, y)
 knn_model.get_params()
@@ -423,15 +465,58 @@ xgboost_model.get_params()
 lightgbm_model = LGBMClassifier(random_state=17).fit(X, y)
 lightgbm_model.get_params()
 
+##################################################################
+# Modelin Overfit olup olmadığını test edelim ;
+##################################################################
+
+train_accuracy = rf_model.score(X_randomover, y_randomover)
+test_accuracy = rf_model.score(X_test, y_test)
 
 
+print(f"Training Accuracy: {train_accuracy}")
+print(f"Test Accuracy: {test_accuracy}")
+# Olmuş. Bunu düzeltmenin bikaç yolu var. Onlardan biri de modelin ön tanımlı değerleri ile oynamak ;
+
+rf_params = {"max_depth": [8, 15, 22],
+             "max_features": [5, 7, "sqrt", "auto"],
+             "min_samples_split": [20, 29, 39],
+             "n_estimators": [100, 200]}
+
+from sklearn.model_selection import GridSearchCV
+
+rf_best_grid = GridSearchCV(rf_model, rf_params, cv=5, n_jobs=-1, verbose=True).fit(X, y)
+rf_best_grid.best_params_
+rf_final = rf_model.set_params(**rf_best_grid.best_params_, random_state=17).fit(X, y)
 
 
+# final modelini test ettiğimizde amacımıza ulaştık. devam ediyoruz ;
+train_accuracy = rf_final.score(X_randomover, y_randomover)
+test_accuracy = rf_final.score(X_test, y_test)
 
 
+##################################################################
+# Modelimizde f1 skoru düşük. Bunun için modelin en iyi f1 skorunu bulup onun threshold değerini kullandık ;
+##################################################################
 
+y_probs = rf_model.predict_proba(X_test)[:, 1]
+precision, recall, thresholds = precision_recall_curve(y_test, y_probs)
+f1_scores = 2*(precision*recall)/(precision+recall)
 
+# En iyi f1 score değerine bakıyoruz ve fikir ediniyoruz.
+best_f1_score = np.max(f1_scores)
+best_threshold = thresholds[np.argmax(f1_scores)] # 0.37
 
+# Değerleri deneyerek 0.42 değerinin en uygun olduğunu görüyoruz.
+y_pred_updated = (y_probs > 0.42).astype(int)
+
+# Yeni değerler ;
+print(f"Accuracy: {round(accuracy_score(y_pred_updated, y_test), 2)}")
+print(f"Recall: {round(recall_score(y_pred_updated,y_test),3)}")
+print(f"Precision: {round(precision_score(y_pred_updated,y_test), 2)}")
+print(f"F1: {round(f1_score(y_pred_updated,y_test), 2)}")
+print(f"Auc: {round(roc_auc_score(y_pred_updated,y_test), 2)}")
+
+df.head()
 
 
 

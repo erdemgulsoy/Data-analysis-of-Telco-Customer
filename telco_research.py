@@ -6,12 +6,14 @@ from matplotlib import pyplot as plt
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, VotingClassifier, AdaBoostClassifier
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import cross_validate, GridSearchCV
+from sklearn.model_selection import cross_validate, GridSearchCV, train_test_split
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.svm import SVC
 from sklearn.tree import DecisionTreeClassifier
 from xgboost import XGBClassifier
 from lightgbm import LGBMClassifier
+from imblearn.over_sampling import RandomOverSampler
+
 
 pd.set_option("display.max_columns", None)
 pd.set_option("display.width", 500)
@@ -232,14 +234,14 @@ def telco_data_prep(dataframe) :
             dataframe[f'NEW_ten_Cont_NOM_{val}'] = 0
 
 
-    all_possible_values = ["very_cheapElectro", "cheapElectro", "normalElectro", "expensiveElectro",
+    all_possible_values2 = ["very_cheapElectro", "cheapElectro", "normalElectro", "expensiveElectro",
                            "very_cheapMail", "cheapMail", "normalMail", "expensiveMail",
                            "very_cheapBank", "cheapBank", "normalBank", "expensiveBank",
                            "very_cheapCredit", "cheapCredit", "normalCredit", "expensiveCredit"]
 
-    for val in all_possible_values:
+    for val in all_possible_values2:
         if f'NEW_Char_Pay_NOM{val}' not in dataframe.columns:
-            dataframe[f'NEW_Char_Pay_NOM{val}'] = 0
+            dataframe[f'NEW_Char_Pay_NOM_{val}'] = 0
 
 
     cat_cols, num_cols, cat_but_car = grab_col_names(dataframe)
@@ -250,9 +252,15 @@ def telco_data_prep(dataframe) :
     y = dataframe["Churn"]
     X = dataframe.drop(["Churn", "customerID"], axis=1)
 
-
-
     return X, y
+
+def unbalanced(X, y):
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.30, random_state=17)
+    oversample = RandomOverSampler(sampling_strategy='minority')
+    X_randomover, y_randomover = oversample.fit_resample(X_train, y_train)
+
+    return X_randomover, y_randomover
+
 
 def base_models(X, y, scoring="roc_auc"):
     print("Base Models....")
@@ -272,19 +280,28 @@ def base_models(X, y, scoring="roc_auc"):
         print(f"{scoring}: {round(cv_results['test_score'].mean(), 4)} ({name}) ")
 
 from config import classifiers
-def hyperparameter_optimization(X, y, cv=3, scoring="roc_auc"):
+def hyperparameter_optimization(X, y, cv=3, scoring=["accuracy", "f1", "roc_auc"]):
     print("Hyperparameter Optimization....")
     best_models = {}
     for name, classifier, params in classifiers:
         print(f"########## {name} ##########")
+
         cv_results = cross_validate(classifier, X, y, cv=cv, scoring=scoring)
-        print(f"{scoring} (Before): {round(cv_results['test_score'].mean(), 4)}")
+
+        print(f"{scoring[0]} (Before): {round(cv_results['test_accuracy'].mean(), 4)}")
+        print(f"{scoring[1]} (Before): {round(cv_results['test_f1'].mean(), 4)}")
+        print(f"{scoring[2]} (Before): {round(cv_results['test_roc_auc'].mean(), 4)}")
 
         gs_best = GridSearchCV(classifier, params, cv=cv, n_jobs=-1, verbose=-1).fit(X, y)
-        final_model = classifier.set_params(**gs_best.best_params_)
+        final_model = classifier.set_params(**gs_best.best_params_).fit(X, y)
+
+        print("--------------------------------")
 
         cv_results = cross_validate(final_model, X, y, cv=cv, scoring=scoring)
-        print(f"{scoring} (After): {round(cv_results['test_score'].mean(), 4)}")
+        print(f"{scoring[0]} (After): {round(cv_results['test_accuracy'].mean(), 4)}")
+        print(f"{scoring[1]} (After): {round(cv_results['test_f1'].mean(), 4)}")
+        print(f"{scoring[2]} (After): {round(cv_results['test_roc_auc'].mean(), 4)}")
+
         print(f"{name} best params: {gs_best.best_params_}", end="\n\n")
         best_models[name] = final_model
     return best_models
